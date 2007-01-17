@@ -1,0 +1,40 @@
+Document Title: lib_gnut_msgs README
+Author(s): Andrew De Ponte <cyphactor@socal.rr.com>
+
+Table of Contents
+
+    1. What Is It? .....................................................
+    2. Building ........................................................
+    3. Systems Tested On ...............................................
+
+1.  What Is It?
+
+    lib_gnut_msgs is a library which implemnets the Gnutella protocol
+    according to the 0.6 rfc draft.
+
+2.  Building
+
+    This project's build sequence is managed by the autotools. Hence,
+    the following command sequence can be used to build the project in
+    any of the unix varients (include Mac OS-X).
+    
+    $ ./bootstrap.sh && ./configure && make
+
+    However, to build a version for windows system from a Debian Linux
+    Etch (testing) box, one needs to first install the mingw32 package
+    via the following:
+
+    # apt-get install mingw32
+
+    Once, the mingw32 package is insalled one can trivially build
+    Windows binaries of the project by using the following command
+    sequence:
+
+    $ ./bootstrap.sh && ./configure --host=i586-mingw32msvc && make
+
+3.  Systems Tested On
+
+    The following systems are all the systems which lib_gnut_msgs has
+    been successfully run on.
+
+    - Linux Debian Etch (Testing)

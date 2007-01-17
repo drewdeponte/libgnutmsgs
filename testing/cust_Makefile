@@ -1,0 +1,32 @@
+
+all:  poison_download_test
+
+poison_download_test: poison_download_test.o gnut_msgs.o gnut_common.o gnut_ping_msg.o gnut_pong_msg.o gnut_query_hit_msg.o gnut_query_msg.o gnut_bye_msg.o
+	gcc -o poison_download_test poison_download_test.o gnut_msgs.o gnut_common.o gnut_ping_msg.o gnut_pong_msg.o gnut_query_msg.o gnut_query_hit_msg.o gnut_bye_msg.o
+
+poison_download_test.o:
+	gcc -c -g poison_download_test.c -I../src
+
+gnut_msgs.o: 
+	gcc -c -g ../src/gnut_msgs.c
+
+gnut_common.o:
+	gcc -c -g ../src/gnut_common.c
+
+gnut_ping_msg.o:
+	gcc -c -g ../src/gnut_ping_msg.c
+
+gnut_pong_msg.o:
+	gcc -c -g ../src/gnut_pong_msg.c
+
+gnut_query_msg.o:
+	gcc -c -g ../src/gnut_query_msg.c
+
+gnut_query_hit_msg.o:
+	gcc -c -g ../src/gnut_query_hit_msg.c
+
+gnut_bye_msg.o:
+	gcc -c -g ../src/gnut_bye_msg.c
+
+clean:
+	rm -f *.o
