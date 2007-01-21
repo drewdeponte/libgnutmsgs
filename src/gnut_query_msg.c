@@ -37,6 +37,22 @@ int _gnut_parse_query_msg_payload(gnut_query_payload_t *pl,
     return 0;
 }
 
+int _gnut_build_query_msg_payload(gnut_query_payload_t *pl,
+    unsigned char *raw_pl) {
+
+    unsigned char *tmp_p;
+
+    tmp_p = raw_pl;
+
+    *((uint16_t *)tmp_p) = pl->min_kb_speed;
+    tmp_p += sizeof(uint16_t);
+
+    memcpy(tmp_p, pl->search_str, (pl->search_str_size - 1));
+    tmp_p[pl->search_str_size] = '\0';
+
+    return 0;
+}
+
 void _gnut_free_query_msg_payload(gnut_query_payload_t *pl) {
     if (pl->search_str != NULL)
         free(pl->search_str);
@@ -45,4 +61,8 @@ void _gnut_free_query_msg_payload(gnut_query_payload_t *pl) {
 void _gnut_dump_query_msg_payload(const gnut_query_payload_t *pl) {
     printf("-- Min Kb Speed: %d.\n", pl->min_kb_speed);
     printf("-- Search Str: %s.\n", pl->search_str);
+}
+
+int _gnut_calc_query_msg_pl_len(gnut_query_payload_t *pl) {
+    return (sizeof(uint16_t) + pl->search_str_size);
 }

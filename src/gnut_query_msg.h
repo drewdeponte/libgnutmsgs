@@ -12,8 +12,13 @@ typedef struct gnut_query_payload {
 int _gnut_parse_query_msg_payload(gnut_query_payload_t *pl,
     unsigned char *raw_pl, uint32_t raw_pl_len);
 
+int _gnut_build_query_msg_payload(gnut_query_payload_t *pl,
+    unsigned char *raw_pl);
+
 void _gnut_free_query_msg_payload(gnut_query_payload_t *pl);
 
 void _gnut_dump_query_msg_payload(const gnut_query_payload_t *pl);
+
+int _gnut_calc_query_msg_pl_len(gnut_query_payload_t *pl);
 
 #endif

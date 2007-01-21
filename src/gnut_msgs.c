@@ -350,6 +350,8 @@ int _gnut_update_msg_pl_len(gnut_msg_t *msg) {
 
     if (type == 0x01) {
         pl_len = _gnut_calc_pong_msg_pl_len(&msg->payload.pong);
+    } else if (type == 0x80) {
+        pl_len = _gnut_calc_query_msg_pl_len(&msg->payload.query);
     } else if (type == 0x81) {
         pl_len = _gnut_calc_query_hit_msg_pl_len(&msg->payload.query_hit);
     }
@@ -378,6 +380,8 @@ int _gnut_build_msg_payload(gnut_msg_t *msg, unsigned char *payload,
         /* Push, is payload */
     } else if(type == 0x80) {
         /* Query, is payload */
+        if (_gnut_build_query_msg_payload(&msg->payload.query, payload) != 0)
+            return -3;
     } else if(type == 0x81) {
         if (_gnut_build_query_hit_msg_payload(&msg->payload.query_hit, payload) != 0)
             return -2;

@@ -1,0 +1,7 @@
+- implement connection recycling such that servers which allow TCP
+  connections but reject us with a 503 get popped off the top of the
+  server list and appended to the bottom for later trial.
+
+- fix the build query msg payload function and test it to make sure it
+  is working, once that is complete then test the msg broadcast
+  implementation.
