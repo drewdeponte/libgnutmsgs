@@ -117,6 +117,8 @@ void *handle_conn(void *arg) {
     gnut_msg_t rmsg;
     int r;
 
+    printf("handle_conn() CALLED.\n");
+
     p_data = (struct hc_sdata *)arg;
 
     sd = p_data->sd;
@@ -133,8 +135,8 @@ void *handle_conn(void *arg) {
 }
 
 void *try_connect(void *arg) {
-    char ip_addr[IP_ADDR_STR_LEN];
-    uint16_t port;
+    char ip_addr[IP_ADDR_STR_LEN];  /* temp storage for serv ip address */
+    uint16_t port;                  /* temp storage for serv port */
     struct sockaddr_in servaddr;
     struct tc_sdata *p_data;
     int sockflags, connsockflag;
@@ -185,6 +187,7 @@ void *try_connect(void *arg) {
         try_conns_cnt--;
         pthread_cond_signal(&try_conns_cnt_cond);
         pthread_mutex_unlock(&try_conns_cnt_mutex);
+        close(sd);
         return NULL;
     }
 
@@ -214,6 +217,7 @@ void *try_connect(void *arg) {
         try_conns_cnt--;
         pthread_cond_signal(&try_conns_cnt_cond);
         pthread_mutex_unlock(&try_conns_cnt_mutex);
+        close(sd);
         return NULL;
     } else { /* call to select succeeded now must see if actually made conn */
         r = getsockopt(sd, SOL_SOCKET, SO_ERROR, &connsockflag,
@@ -226,6 +230,7 @@ void *try_connect(void *arg) {
             try_conns_cnt--;
             pthread_cond_signal(&try_conns_cnt_cond);
             pthread_mutex_unlock(&try_conns_cnt_mutex);
+            close(sd);
             return NULL;
         }
 
@@ -237,6 +242,7 @@ void *try_connect(void *arg) {
             try_conns_cnt--;
             pthread_cond_signal(&try_conns_cnt_cond);
             pthread_mutex_unlock(&try_conns_cnt_mutex);
+            close(sd);
             return NULL;
         }
     }
@@ -247,6 +253,7 @@ void *try_connect(void *arg) {
     retval = handle_handshake(sd);
     if (retval == 0) {
         printf("try_conn: %s:%d Handshake rejected, but provided server list.\n", ip_addr, port);
+        close(sd);
     } else if (retval == 1) {
         /* successfully performed handshake */
         printf("try_conn: %s:%d Handshake accepted, adding to central conn list.\n", ip_addr, port);
@@ -258,6 +265,7 @@ void *try_connect(void *arg) {
             try_conns_cnt--;
             pthread_cond_signal(&try_conns_cnt_cond);
             pthread_mutex_unlock(&try_conns_cnt_mutex);
+            close(sd);
             return NULL;
         }
         p_hcsdata->sd = sd;
@@ -267,6 +275,7 @@ void *try_connect(void *arg) {
         r = add_conn_to_list(sd, port, ip_addr);
         if (r != 0) {
             printf("try_conn: %s:%d Err(%d): Failed to add conn to conns list.\n", ip_addr, port, r);
+            close(sd);
         }
 
         /* create a new handle_conn thread to handle the newly
@@ -275,9 +284,11 @@ void *try_connect(void *arg) {
         if (r != 0) {
             printf("try_conn: %s:%d Err(%d): Failed to create conn handler.\n",
                 ip_addr, port, r);
+            close(sd);
         }
     } else {
         printf("try_conn: %s:%d Handshake rejecet, without list of servers.\n", ip_addr, port);
+        close(sd);
     }
 
     pthread_mutex_lock(&try_conns_cnt_mutex);
@@ -538,6 +549,7 @@ struct serv_list_node *append_server_to_list(const char *ip_addr,
         }
 
         strncpy(new_node->ip_addr, ip_addr, 16);
+        new_node->ip_addr[15] = '\0';
         new_node->port = port;
         new_node->next = NULL;
 
@@ -554,6 +566,7 @@ struct serv_list_node *append_server_to_list(const char *ip_addr,
         }
 
         strncpy(new_node->ip_addr, ip_addr, 16);
+        new_node->ip_addr[15] = '\0';
         new_node->port = port;
         new_node->next = NULL;
 
@@ -580,6 +593,7 @@ struct serv_list_node *prepend_server_to_list(const char *ip_addr,
     }
 
     strncpy(new_node->ip_addr, ip_addr, 16);
+    new_node->ip_addr[15] = '\0';
     new_node->port = port;
     new_node->next = p_list;
 
@@ -651,20 +665,20 @@ int handle_handshake(int fd) {
 
         //printf("--attempting to write: %s\n",finish_init);
         write(fd, (const void *)finish_init, strlen(finish_init));
-		
+
 		//parse shit inside here? ie add to main conn list, then call HandleComThread
-		
-			
-		
+
+	
+
 
 		return 1;
     }
-	
+
 	//so we got rejected with a 503, lets go through again and check for X-TRY-Ultrapeers
 	memset(tempbuf,0x00,BUFSIZE);
 	strcpy(tempbuf,recv_buff);
     line = strtok_r(tempbuf, "\r\n",&saveptr2);
-	while ( (line=strtok_r(saveptr2, "\r\n",&saveptr2)) != NULL)        
+	while ( (line=strtok_r(saveptr2, "\r\n",&saveptr2)) != NULL)     
 	{
     	if((templine = strstr(line,"X-Try-Ultrapeers:")) != NULL) {
 			//printf("got a list!\n");
@@ -675,7 +689,7 @@ int handle_handshake(int fd) {
 			return 0;
     	}
 	}
-		
+
 	return 2;
 }
 
@@ -696,9 +710,8 @@ void parse_list(char *buf)
 
     while ( (line=strtok_r(saveptr1, "\r\n",&saveptr1)) != NULL)
     {
-		
 		if((start = strstr(line,"X-Try-Ultrapeers:")) != NULL) {
-			line = start+=18;			
+			line = start+=18;
 		
 			while((ip = index(line,',')) != NULL) {
 				*(ip) = '\0';
@@ -706,9 +719,9 @@ void parse_list(char *buf)
 				//this is where we call something to add the ip/port to a list
 				colon = index(line,':');
 				*(colon) = '\0';
-				strcpy(single_ip,line);	
+				strcpy(single_ip,line);
 				line = colon+1;
-				port = atoi(line);				
+				port = atoi(line);
 				
 				//add me to list -- PUT LIST CODE HERE, add to ComList
                 pthread_mutex_lock(&serv_list_mutex);
@@ -722,7 +735,7 @@ void parse_list(char *buf)
                 serv_list_len++;
                 pthread_mutex_unlock(&serv_list_len_mutex);
 
-				line = ip+1;					
+				line = ip+1;		
 			}	
 		}
     }
@@ -752,7 +765,7 @@ int bcast_msg(int orig_sd, gnut_msg_t *p_msg) {
         }
         cur_node = cur_node->next;
     }
-    pthread_mutex_unlock(&conn_list_mutex); 
+    pthread_mutex_unlock(&conn_list_mutex);
 
     return 0;
 }
@@ -818,6 +831,7 @@ int add_conn_to_list(int sd, uint16_t port, char *ip_addr) {
     new_node->sd = sd;
     new_node->port = port;
     strncpy(new_node->ip_addr,ip_addr,16);
+    new_node->ip_addr[15] = '\0';
     new_node->msg_id_cnt = 0;
     new_node->msg_id_loop_flag = 0;
     pthread_mutex_init(&new_node->sd_mutex, NULL);
@@ -869,11 +883,11 @@ int get_len_of_serv_list(void) {
 }
 
 int prebuild_serv_list(char *filename) {
-	FILE           *fp;
+	FILE    *fp;
 	char buf[30];
 	char *colon;
 	char ip[16];
-	int port;	
+	int port;
     struct serv_list_node *tmphead;
 
 	if((fp = fopen(filename,"r")) == NULL) {
@@ -883,12 +897,12 @@ int prebuild_serv_list(char *filename) {
 
 	while(fgets(buf,29,fp)) {
 		buf[strlen(buf)] = '\0';
-			
+
 		colon = index(buf,':');
 		*(colon) = '\0';
-		strcpy(ip,buf); 
+		strcpy(ip,buf);
 		colon = colon+1;
-		port = atoi(colon); 		
+		port = atoi(colon);
 
         pthread_mutex_lock(&serv_list_mutex);
 		if((tmphead = append_server_to_list(ip,(uint16_t)port,serv_list)) != NULL) {
