@@ -7,6 +7,8 @@ typedef struct gnut_query_payload {
     uint16_t min_kb_speed;
     char *search_str;
     int search_str_size;
+    unsigned char *rest;
+    int rest_size;
 } gnut_query_payload_t;
 
 int _gnut_parse_query_msg_payload(gnut_query_payload_t *pl,

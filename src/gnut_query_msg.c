@@ -5,6 +5,7 @@ int _gnut_parse_query_msg_payload(gnut_query_payload_t *pl,
 
     unsigned char *tmp_p;
     int search_str_len;
+    int rest_size;
 
     tmp_p = raw_pl;
 
@@ -34,6 +35,10 @@ int _gnut_parse_query_msg_payload(gnut_query_payload_t *pl,
 
     pl->search_str_size = search_str_len + 1;
 
+    tmp_p = tmp_p + search_str_len + 1;
+    rest_size = raw_pl_len - sizeof(uint16_t) - search_str_len - 1;
+    pl->rest = malloc(rest_size);
+
     return 0;
 }
 
@@ -46,6 +51,9 @@ int _gnut_build_query_msg_payload(gnut_query_payload_t *pl,
 
     *((uint16_t *)tmp_p) = pl->min_kb_speed;
     tmp_p += sizeof(uint16_t);
+
+    printf("_gnut_build_query_msg_payload() seach_str_size = %d.\n",
+        pl->search_str_size);
 
     memcpy(tmp_p, pl->search_str, (pl->search_str_size - 1));
     tmp_p[pl->search_str_size] = '\0';

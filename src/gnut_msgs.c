@@ -157,6 +157,8 @@ int gnut_send_msg(gnut_msg_t *p_msg, int sd) {
         return -6;
     }
 
+    printf("pl_len = %d.\n", p_msg->header.pl_len);
+
     wire_buf_size = (GNUT_MSG_HEADER_SIZE + p_msg->header.pl_len);
 
     wire_buf = (char *)malloc((size_t)wire_buf_size);
