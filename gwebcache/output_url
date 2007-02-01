@@ -1,0 +1,119 @@
+host: gwc.dietpac.com, port: 8080, extra: /
+Host name  : gwc.dietpac.com
+IP Address : 65.112.206.243
+--created a socket
+--setup the server struct
+--attempting to connect
+--attempting to write
+Wrote (GET /?client=XXXX&urlfile=1 HTTP/1.1
+Host: gwc.dietpac.com:8080
+
+)
+Read (HTTP/1.1 200 OK
+Date: Wed, 31 Jan 2007 05:49:03 GMT
+Server: GhostWhiteCrab/0.9.7
+Content-Length: 119
+Connection: close
+Content-Type: text/plain
+
+http://gwc.glucolene.com:8080/
+http://mcache.guenever.net/mcache.php
+http://mute.filesharingdownloads.be/mcache.php
+).
+they said ok i guess
+return was not 0
+host: gwc.downloadmusicinc.com, port: 80, extra: /gcache.cgi
+Host name  : downloadmusicinc.com
+IP Address : 209.59.209.167
+--created a socket
+--setup the server struct
+--attempting to connect
+--attempting to write
+Wrote (GET /gcache.cgi?client=XXXX&urlfile=1 HTTP/1.1
+Host: gwc.downloadmusicinc.com:80
+
+)
+Read (HTTP/1.1 404 Not Found
+Date: Wed, 31 Jan 2007 05:52:17 GMT
+Server: Apache/2.0.55 (Ubuntu) PHP/5.1.6 mod_ssl/2.0.55 OpenSSL/0.9.8b mod_perl/2.0.2 Perl/v5.8.8
+Content-Length: 365
+Content-Type: text/html; charset=iso-8859-1
+
+<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
+<html><head>
+<title>404 Not Found</title>
+</head><body>
+<h1>Not Found</h1>
+<p>The requested URL /gcache.cgi was not found on this server.</p>
+<hr>
+<address>Apache/2.0.55 (Ubuntu) PHP/5.1.6 mod_ssl/2.0.55 OpenSSL/0.9.8b mod_perl/2.0.2 Perl/v5.8.8 Server at 
+gwc.downloadmusicinc.com Port 80</address>
+</body></html>
+).
+They said no thanks, so checking now for list
+return was not 0
+host: mute.filesharingdownloads.be, port: 80, extra: /mcache.php
+Host name  : mute.filesharingdownloads.be
+IP Address : 75.126.63.14
+--created a socket
+--setup the server struct
+--attempting to connect
+--attempting to write
+Wrote (GET /mcache.php?client=XXXX&urlfile=1 HTTP/1.1
+Host: mute.filesharingdownloads.be:80
+
+)
+Read (HTTP/1.1 406 Not Acceptable
+Date: Wed, 31 Jan 2007 05:52:17 GMT
+Server:  
+Connection: close
+Transfer-Encoding: chunked
+Content-Type: text/html; charset=iso-8859-1
+
+101
+<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
+<HTML><HEAD>
+<TITLE>406 Not Acceptable</TITLE>
+</HEAD><BODY>
+<H1>Not Acceptable</H1>
+An appropriate representation of the requested resource /mcache.php could not be found on this server.<P>
+</BODY></HTML>
+
+0
+
+).
+They said no thanks, so checking now for list
+return was not 0
+host: jercos.dyndns.org, port: 80, extra: /perlgcache.cgi
+Host name  : jercos.dyndns.org
+IP Address : 69.104.3.183
+--created a socket
+--setup the server struct
+--attempting to connect
+--attempting to write
+Wrote (GET /perlgcache.cgi?client=XXXX&urlfile=1 HTTP/1.1
+Host: jercos.dyndns.org:80
+
+)
+Read (HTTP/1.1 200 OK
+Date: Wed, 31 Jan 2007 05:52:24 GMT
+Server: Apache/2.0.55 (Ubuntu) PHP/5.1.6 mod_ssl/2.0.55 OpenSSL/0.9.8b
+Cache-control: no-cache
+Connection: close
+Transfer-Encoding: chunked
+Content-Type: text/plain; charset=UTF-8
+
+189
+http://www.xolox.nl/gwebcache/
+http://mcache.guenever.net/mcache.php
+http://gwc.downloadmusicinc.com/gcache.cgi
+http://www.xolox.nl/gwebcache/default.asp
+http://gwc.dietpac.com:8080/
+http://mutecache.ath.cx/mcache.php
+http://jercos.dyndns.org/perlgcache.cgi
+http://www.rent-a-nerd.dk/mute/mcache.php
+http://gwc1c.olden.ch.3557.nyud.net:8090/gwc/
+http://reukiodo.dyndns.org/gwebcache/gwcii.php
+
+).
+
