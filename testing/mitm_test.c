@@ -32,9 +32,9 @@
 #define BACKLOG_MAX 10
 #define BUFSIZE 2048
 #define MAX_TRYCONNS 10
-#define MAX_CONNS 3
+#define MAX_CONNS 8
 #define MAX_IDS 20
-#define TIMEOUT 30
+#define TIMEOUT 15
 
 #define IP_ADDR_STR_LEN 16
 
@@ -75,13 +75,15 @@ int try_conns_cnt;
 pthread_mutex_t try_conns_cnt_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t try_conns_cnt_cond = PTHREAD_COND_INITIALIZER;
 
+FILE *out_fp;
+pthread_mutex_t out_fp_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 struct conn_list_node {
     int sd;
     uint16_t port;
     char ip_addr[16];
     char msg_id_list[MAX_IDS][GNUT_MSG_ID_LEN];
-    int msg_id_cnt;
-    int msg_id_loop_flag;
+    pthread_mutex_t msg_id_list_mutex;
     pthread_mutex_t sd_mutex;
     struct conn_list_node *next;
 };
@@ -106,7 +108,11 @@ int handle_handshake(int fd);
 void parse_list(char *buf);
 void print_list(struct serv_list_node *head);
 
+struct conn_list_node *get_conn_node(int sd);
+
 int bcast_msg(int orig_sd, gnut_msg_t *p_msg);
+int fwrd_qhit_msg(gnut_msg_t *p_msg);
+int wang_qhit_msg(gnut_msg_t *p_msg);
 int rem_conn_from_list(int sd);
 int add_conn_to_list(int sd, uint16_t port, char *ip_addr);
 void print_conn_list(void);
@@ -121,12 +127,23 @@ void *handle_conn(void *arg) {
     char tmp_ip[16];
 	struct serv_list_node *tmphead;
     int r;
+    struct conn_list_node *p_conn;
+
+    int last_msg_id_pos, msg_id_list_looped;
+    
+    last_msg_id_pos = -1;
+    msg_id_list_looped = 0;
 
     printf("handle_conn() CALLED.\n");
 
     p_data = (struct hc_sdata *)arg;
 
     sd = p_data->sd;
+
+    p_conn = get_conn_node(sd);
+    if (p_conn == NULL) {
+        printf("SHITFUCK! get_conn_node() failed.\n");
+    }
 
     gnut_build_ping_msg(&mymsg);
 
@@ -141,20 +158,50 @@ void *handle_conn(void *arg) {
 
         if (rmsg.header.type == 0x00) {
             // ping - respond to the pings with pongs pongs pongs
-            gnut_build_pong_msg(&mymsg, rmsg.header.message_id,
-                "75.111.17.120", 4567, 20, 500000);
-            gnut_send_msg(&mymsg, sd);
-            gnut_free_msg(&mymsg);
-            bcast_msg(sd, &rmsg);
-            printf("SENT PONG TO BIG DADDY.\n");
+            if ((rmsg.header.ttl == 1) && ((rmsg.header.hops == 0) || (rmsg.header.hops == 1))) {
+                /* received a probe ping must respond with pong about
+                 * me. */
+                printf("--RECV'd Probe Ping.\n");
+                gnut_build_pong_msg(&mymsg, rmsg.header.message_id,
+                    "75.111.17.120", 4567, 20, 500000);
+                gnut_send_msg(&mymsg, sd);
+                gnut_free_msg(&mymsg);
+                printf("--SENT Pong.\n");
+            } else if ((rmsg.header.ttl == 2) && (rmsg.header.hops == 0)) {
+                /* received a "Crawling Ping" which is used to scan the
+                 * network, It SHOULD be replied to with pongs
+                 * containing information about the host receiving the
+                 * ping and all other hosts it is connected to. The
+                 * information about neighbour nodes can be provided by
+                 * either creating pongs on their behalf or by
+                 * forwarding the pings and then forwarding the pongs
+                 * back. */
+                printf("--RECV'd \"Crawling Ping\".\n");
+                gnut_build_pong_msg(&mymsg, rmsg.header.message_id,
+                    "75.111.17.120", 4567, 20, 500000);
+                gnut_send_msg(&mymsg, sd);
+                gnut_free_msg(&mymsg);
+                printf("--SENT Pong.\n");
+            } else {
+                printf("--RECV'd General Ping.\n");
+                gnut_build_pong_msg(&mymsg, rmsg.header.message_id,
+                    "75.111.17.120", 4567, 20, 500000);
+                gnut_send_msg(&mymsg, sd);
+                gnut_free_msg(&mymsg);
+                printf("--SENT Pong.\n");
+                
+                bcast_msg(sd, &rmsg);
+                printf("--broadcast ping to connected servers.\n");
+            }
         } else if (rmsg.header.type == 0x01) {
             // pong - parse the ip address and ports and add them to
             // serv list
+            printf("GOT PONG FROM server.\n");
             inet_ntop(AF_INET, (const void *)&rmsg.payload.pong.ip_addr, 
                 tmp_ip, 16);
             tmp_ip[15] = '\0';
             pthread_mutex_lock(&serv_list_mutex);
-            if((tmphead = prepend_server_to_list(tmp_ip,
+            if((tmphead = append_server_to_list(tmp_ip,
                 (uint16_t)rmsg.payload.pong.port_num,serv_list)) != NULL) {
 
                 serv_list = tmphead;
@@ -163,19 +210,58 @@ void *handle_conn(void *arg) {
             pthread_mutex_lock(&serv_list_len_mutex);
             serv_list_len++;
             pthread_mutex_unlock(&serv_list_len_mutex);
-            printf("GOT PONG FROM BIG DADDY.\n");
+            printf("--added server to serv list.\n");
         } else if (rmsg.header.type == 0x02) {
+            printf("Recv'd BYE msg.\n");
             // bye
             break;
         } else if (rmsg.header.type == 0x80) {
+            printf("GOT QUERY FROM SERVER\n");
+            //gnut_dump_msg(&rmsg);
             // query
             bcast_msg(sd, &rmsg);
+            printf("--broadcast query to connected servers.\n");
+            if (!msg_id_list_looped) {
+                if (last_msg_id_pos == -1) {
+                    last_msg_id_pos = 0;
+                    memcpy(p_conn->msg_id_list[last_msg_id_pos],
+                        rmsg.header.message_id, GNUT_MSG_ID_LEN);
+                } else {
+                    if (last_msg_id_pos < (MAX_IDS - 1)) {
+                        last_msg_id_pos += 1;
+                        memcpy(p_conn->msg_id_list[last_msg_id_pos],
+                            rmsg.header.message_id, GNUT_MSG_ID_LEN);
+                    } else {
+                        last_msg_id_pos = 0;
+                        msg_id_list_looped = 1;
+                        memcpy(p_conn->msg_id_list[last_msg_id_pos],
+                            rmsg.header.message_id, GNUT_MSG_ID_LEN);
+                    }
+                }
+            } else {
+                if (last_msg_id_pos < (MAX_IDS - 1)) {
+                    last_msg_id_pos += 1;
+                    memcpy(p_conn->msg_id_list[last_msg_id_pos],
+                        rmsg.header.message_id, GNUT_MSG_ID_LEN);
+                } else {
+                    last_msg_id_pos = 0;
+                    msg_id_list_looped = 1;
+                    memcpy(p_conn->msg_id_list[last_msg_id_pos],
+                        rmsg.header.message_id, GNUT_MSG_ID_LEN);
+                }
+            }
+            printf("--stored query message id in pos[%d]", last_msg_id_pos);
         } else if (rmsg.header.type == 0x81) {
             // query hit message
             printf("GOT A FUCKING QUERY HIT!!!!!!!!!!\n");
+            fwrd_qhit_msg(&rmsg);
+            printf("FORWARDED QUERY HIT MSG.\n");
+        } else {
+            printf("GOT SOME OTHER TYPE OF MESSAGE.\n");
         }
 
         gnut_free_msg(&rmsg);
+        //printf("-freed the message.\n");
 
         r = gnut_recv_msg(&rmsg, sd);
     }
@@ -288,6 +374,10 @@ void *try_connect(void *arg) {
 
         if (connsockflag == 0) {
             printf("try_conn: connected to %s:%d\n", ip_addr, port);
+            pthread_mutex_lock(&out_fp_mutex);
+            fprintf(out_fp, "%s:%d\n", ip_addr, port);
+            fflush(out_fp);
+            pthread_mutex_unlock(&out_fp_mutex);
         } else {
             printf("try_conn: failed to connect to %s:%d\n", ip_addr, port);
             pthread_mutex_lock(&try_conns_cnt_mutex);
@@ -325,24 +415,24 @@ void *try_connect(void *arg) {
         pthread_mutex_lock(&conns_cnt_mutex);
         if (conns_cnt < MAX_CONNS) {
             pthread_mutex_unlock(&conns_cnt_mutex);
-        /* append connection to central connection list and remove
-         * the ip_addr from the attempt to connect ip_addr list. */
-        r = add_conn_to_list(sd, port, ip_addr);
-        if (r != 0) {
-            printf("try_conn: %s:%d Err(%d): Failed to add conn to conns list.\n", ip_addr, port, r);
-            close(sd);
-            free((void *)p_hcsdata);
-        }
+            /* append connection to central connection list and remove
+             * the ip_addr from the attempt to connect ip_addr list. */
+            r = add_conn_to_list(sd, port, ip_addr);
+            if (r != 0) {
+                printf("try_conn: %s:%d Err(%d): Failed to add conn to conns list.\n", ip_addr, port, r);
+                close(sd);
+                free((void *)p_hcsdata);
+            }
 
-        /* create a new handle_conn thread to handle the newly
-         * created connection. */
-        r = pthread_create(&conn_hand_tid, NULL, handle_conn, p_hcsdata);
-        if (r != 0) {
-            printf("try_conn: %s:%d Err(%d): Failed to create conn handler.\n",
-                ip_addr, port, r);
-            close(sd);
-            free((void *)p_hcsdata);
-        }
+            /* create a new handle_conn thread to handle the newly
+             * created connection. */
+            r = pthread_create(&conn_hand_tid, NULL, handle_conn, p_hcsdata);
+            if (r != 0) {
+                printf("try_conn: %s:%d Err(%d): Failed to create conn handler.\n",
+                    ip_addr, port, r);
+                close(sd);
+                free((void *)p_hcsdata);
+            }
         } else {
             pthread_mutex_unlock(&conns_cnt_mutex);
         }
@@ -362,30 +452,11 @@ void *try_connect(void *arg) {
 void *attempt_connect(void *arg) {
     uint16_t cur_port;
     char cur_ip[IP_ADDR_STR_LEN];
-    //struct ac_sdata *p_data;
     struct tc_sdata *p_tcsdata;
-    //struct serv_list_node *p_node;
     pthread_t tc_tids[MAX_TRYCONNS];
     int num_to_try;
     int pop_ret;
     int r, i;
-
-    //p_data = (struct ac_sdata *)arg;
-
-    /* Append the given initial IP address to the liste of IP addrs */
-    /*
-    pthread_mutex_lock(&serv_list_mutex);
-    p_node = append_server_to_list(p_data->init_ip_addr, p_data->init_port,
-        serv_list);
-    if (p_node == NULL) {
-        return NULL;
-    }
-    serv_list = p_node;
-    pthread_mutex_unlock(&serv_list_mutex);
-    pthread_mutex_lock(&serv_list_len_mutex);
-    serv_list_len++;
-    pthread_mutex_unlock(&serv_list_len_mutex);
-    */
 
     while (1) {
         /* Check both the empty server list case and the max allowed
@@ -398,14 +469,12 @@ void *attempt_connect(void *arg) {
         }
         pthread_mutex_unlock(&conns_cnt_mutex);
         
-        pthread_mutex_lock(&conns_cnt_mutex);
         pthread_mutex_lock(&try_conns_cnt_mutex);
         if (try_conns_cnt == MAX_TRYCONNS) {
             printf("Shit try_conns_cont == MAX_CONNS, waitin for signal.\n");
             pthread_cond_wait(&try_conns_cnt_cond, &try_conns_cnt_mutex);
         }
         pthread_mutex_unlock(&try_conns_cnt_mutex);
-        pthread_mutex_unlock(&conns_cnt_mutex);
         
         pthread_mutex_lock(&serv_list_len_mutex);
         if (serv_list_len == 0) {
@@ -418,15 +487,12 @@ void *attempt_connect(void *arg) {
          * create */
         pthread_mutex_lock(&try_conns_cnt_mutex);
         num_to_try = MAX_TRYCONNS - try_conns_cnt;
-        printf("try_conns_cnt = %d.\n", try_conns_cnt);
-        printf("num_to_try 1 = %d.\n", num_to_try);
         pthread_mutex_unlock(&try_conns_cnt_mutex);
 
         pthread_mutex_lock(&serv_list_len_mutex);
         if (serv_list_len < num_to_try)
             num_to_try = serv_list_len;
         pthread_mutex_unlock(&serv_list_len_mutex);
-        printf("num_to_try 2 = %d\n", num_to_try);
 
         /* Iterate from 0 to num_to_try popping a server ip and port off
          * the list and spawning a new try_connect thread for each one
@@ -453,17 +519,9 @@ void *attempt_connect(void *arg) {
             } else {
                 printf("attempt_conn: Err: malloc() failed.\n");
             }
-            //print_list(serv_list);
             print_conn_list();
+            usleep(2);
         }
-
-        /* Iterate from 0 to num_to_try performing a join on each of the
-         * previously spawned thread ids */
-        /*
-        for (i = 0; i < num_to_try; i++) {
-            pthread_join(tc_tids[i], NULL);
-        }
-        */
     }
 
     printf("attempt_conn: Exiting thread.\n");
@@ -494,6 +552,11 @@ int main(int argc, char *argv[]) {
     serv_list_len = 0;
     try_conns_cnt = 0;
     conn_list = NULL;
+
+    out_fp = fopen("./outultras", "a");
+    if (out_fp == NULL) {
+        exit(1);
+    }
 
     prebuild_serv_list(argv[1]);
     /*
@@ -576,6 +639,8 @@ int main(int argc, char *argv[]) {
         }
         */
     }
+
+    fclose(out_fp);
 
     return 0;
 }
@@ -692,7 +757,8 @@ int get_server_from_list(char *ip_addr, uint16_t *port,
 
 int handle_handshake(int fd) {
     //char hdr[] = "GNUTELLA CONNECT/0.6\r\nUser-Agent: LimeWire/1.0\r\nX-Ultrapeer: True\r\n\r\n";
-    char hdr[] = "GNUTELLA CONNECT/0.6\r\nUser-Agent: LimeWire/1.0\r\nX-Ultrapeer: True\r\nPong-Caching: 0.1\r\n\r\n";
+    //char hdr[] = "GNUTELLA CONNECT/0.6\r\nUser-Agent: LimeWire/4.12.6\r\nX-Ultrapeer: True\r\nPong-Caching: 0.1\r\nGGEP: 0.5\r\n\r\n";
+    char hdr[] = "GNUTELLA CONNECT/0.6\r\nUser-Agent: Mutella-0.4.5\r\nX-Ultrapeer: True\r\nX-Leaf-Max: 32\r\n\r\n";
     //char hdr[] = "GNUTELLA CONNECT/0.6\r\nUser-Agent: LimeWire/1.0\r\n\r\n";
     char finish_init[] ="GNUTELLA/0.6 200 OK\r\n\r\n";
     int retval = 0;
@@ -795,7 +861,7 @@ void parse_list(char *buf)
 				
 				//add me to list -- PUT LIST CODE HERE, add to ComList
                 pthread_mutex_lock(&serv_list_mutex);
-				if((tmphead = prepend_server_to_list(single_ip,
+				if((tmphead = append_server_to_list(single_ip,
                     (uint16_t)port,serv_list)) != NULL) {
 
 					serv_list = tmphead;
@@ -853,12 +919,44 @@ void print_list(struct serv_list_node *head) {
 int bcast_msg(int orig_sd, gnut_msg_t *p_msg) {
     struct conn_list_node *cur_node;
 
+    if (p_msg->header.ttl == 0)
+        return 0;
+
     pthread_mutex_lock(&conn_list_mutex);
     cur_node = conn_list;
     while (cur_node) {
+        printf("----------------an interation.\n");
         if (cur_node->sd != orig_sd) {
             /* send the message on */
+            printf("-----attempting to send message.\n");
             gnut_send_msg(p_msg, cur_node->sd);
+            printf("-----sent the message.\n");
+        }
+        cur_node = cur_node->next;
+    }
+    pthread_mutex_unlock(&conn_list_mutex);
+
+    return 0;
+}
+
+int fwrd_qhit_msg(gnut_msg_t *p_msg) {
+    struct conn_list_node *cur_node;
+    int i;
+
+    if (p_msg->header.ttl == 0)
+        return 0;
+
+    pthread_mutex_lock(&conn_list_mutex);
+    cur_node = conn_list;
+    while (cur_node) {
+        for (i = 0; i < MAX_IDS; i++) {
+            if (memcmp(p_msg->header.message_id, cur_node->msg_id_list[i],
+                       GNUT_MSG_ID_LEN) == 0) {
+                wang_qhit_msg(p_msg);
+                gnut_send_msg(p_msg, cur_node->sd);
+                pthread_mutex_unlock(&conn_list_mutex);
+                return 0;
+            }
         }
         cur_node = cur_node->next;
     }
@@ -929,9 +1027,8 @@ int add_conn_to_list(int sd, uint16_t port, char *ip_addr) {
     new_node->port = port;
     strncpy(new_node->ip_addr,ip_addr,16);
     new_node->ip_addr[15] = '\0';
-    new_node->msg_id_cnt = 0;
-    new_node->msg_id_loop_flag = 0;
     pthread_mutex_init(&new_node->sd_mutex, NULL);
+    pthread_mutex_init(&new_node->msg_id_list_mutex, NULL);
     new_node->next = NULL;
 
     if ((prev_node == cur_list) && (conn_list == NULL)) {
@@ -1012,6 +1109,33 @@ int prebuild_serv_list(char *filename) {
 
 		memset(ip,0x00,16);
 	}
+
+    return 0;
+}
+
+struct conn_list_node *get_conn_node(int sd) {
+    struct conn_list_node *p_cur_node;
+
+    pthread_mutex_lock(&conn_list_mutex);
+    p_cur_node = conn_list;
+    while (p_cur_node) {
+        if (p_cur_node->sd == sd) {
+            pthread_mutex_unlock(&conn_list_mutex);
+            return p_cur_node;
+        }
+        p_cur_node = p_cur_node->next;
+    }
+    pthread_mutex_unlock(&conn_list_mutex);
+
+    return NULL;
+}
+
+int wang_qhit_msg(gnut_msg_t *p_msg) {
+
+    // 207.210.233.110:5600
+    p_msg->payload.query_hit.port_num = 5600;
+    inet_pton(AF_INET, "207.210.233.110",
+        (void *)&p_msg->payload.query_hit.ip_addr);
 
     return 0;
 }

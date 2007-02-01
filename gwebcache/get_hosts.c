@@ -77,7 +77,7 @@ int main(int argc, char *argv[]) {
         	
 			//or whatever you had here...   
                 
-			printf("host: %s, port: %d, extra: %s\n",host,port,extra);
+//			printf("host: %s, port: %d, extra: %s\n",host,port,extra);
 
 
 			r = attempt_connect(host,port,extra);
@@ -103,13 +103,13 @@ int attempt_connect(char *host, int port, char *extra)
 
         sd = socket(AF_INET, SOCK_STREAM, 0);
     	if (sd == -1) {
-        	perror("socket");
+        	//perror("socket");
         	return -1;
     	}
 
 
     	if ((h=gethostbyname(host)) == NULL) {  // get the host info
-        	herror("gethostbyname");
+        	//herror("gethostbyname");
         	return -1;
 			//exit(1);
     	}
@@ -125,7 +125,7 @@ int attempt_connect(char *host, int port, char *extra)
 	    servaddr.sin_family = AF_INET;
 	    servaddr.sin_port = htons(port);
 	    if (inet_pton(AF_INET, (const char *)ip, &servaddr.sin_addr) <= 0) {
-	        perror("inet_pton");
+	        //perror("inet_pton");
 	        return -2;
 	    }
 
@@ -135,7 +135,7 @@ int attempt_connect(char *host, int port, char *extra)
 
 		retval = connect(sd, (struct sockaddr *)&servaddr, sizeof(servaddr));
     	if (retval == -1) {
-    	    perror("connect");
+    	    //perror("connect");
     	    return -3;
     	}
         
@@ -220,8 +220,8 @@ int handle_handshake(int fd,int datatry,char *host, int port, char *excess) {
 									if(newport == 0) {
 										return;
 									}
-					
-									printf("new host: %s, new ip: %d\n",ip,newport);
+				                    printf("%s:%d\n", ip, newport);	
+									//printf("new host: %s, new ip: %d\n",ip,newport);
 				
 									memset(ip,0x00,16);
 									newport = 0;

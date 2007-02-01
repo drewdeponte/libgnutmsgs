@@ -157,7 +157,7 @@ int gnut_send_msg(gnut_msg_t *p_msg, int sd) {
         return -6;
     }
 
-    printf("pl_len = %d.\n", p_msg->header.pl_len);
+    //printf("pl_len = %d.\n", p_msg->header.pl_len);
 
     wire_buf_size = (GNUT_MSG_HEADER_SIZE + p_msg->header.pl_len);
 
@@ -337,6 +337,10 @@ int _gnut_parse_msg_payload(gnut_msg_t *msg, unsigned char *payload,
         }
     } else if(type == 0x81) {
         /* Query Hit, is payload */
+        if (_gnut_parse_query_hit_msg_payload(&msg->payload.query_hit,
+            payload, pl_len) != 0) {
+            return -3;
+        }
     }
 
     return 0;

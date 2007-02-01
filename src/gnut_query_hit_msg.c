@@ -70,10 +70,14 @@ void _gnut_free_query_hit_msg_payload(gnut_query_hit_payload_t *pl) {
     p_cur_res = pl->list;
     while (p_cur_res != NULL) {
         p_next_res = p_cur_res->next;
-        if (p_cur_res->file_name != NULL)
+        if (p_cur_res->file_name != NULL) {
             free(p_cur_res->file_name);
-        if (p_cur_res->exten_block != NULL)
+            p_cur_res->file_name = NULL;
+        }
+        if (p_cur_res->exten_block != NULL) {
             free(p_cur_res->exten_block);
+            p_cur_res->exten_block = NULL;
+        }
         free(p_cur_res);
         p_cur_res = p_next_res;
     }
@@ -167,6 +171,99 @@ int _gnut_build_query_hit_msg_payload(gnut_query_hit_payload_t *pl,
     /* Fill in the servent id in the raw payload */
     memcpy((void *)p_raw_pl, (void *)pl->servent_id, GNUT_SERVENT_ID_LEN);
     p_raw_pl = p_raw_pl + GNUT_SERVENT_ID_LEN;
+
+    return 0;
+}
+
+int _gnut_parse_query_hit_msg_payload(gnut_query_hit_payload_t *pl,
+    unsigned char *raw_pl, uint32_t raw_pl_len) {
+
+    unsigned char *tmp_p;
+    uint32_t tmp_size;
+    int i;
+    uint32_t file_index;
+    uint32_t file_size;
+    char file_name[256];
+    unsigned char exten_block[256];
+    gnut_query_hit_result_t *res_set;
+    
+    res_set = NULL;
+    tmp_p = raw_pl;
+    tmp_size = 0;
+
+    pl->num_hits = *((unsigned char *)tmp_p);
+    tmp_p += sizeof(unsigned char);
+    tmp_size += sizeof(unsigned char);
+
+    pl->port_num = *((uint16_t *)tmp_p);
+    tmp_p += sizeof(uint16_t);
+    tmp_size += sizeof(unsigned char);
+
+    pl->ip_addr.s_addr = *((uint32_t *)tmp_p);
+    tmp_p += sizeof(uint32_t);
+    tmp_size += sizeof(uint32_t);
+
+    pl->speed = *((uint32_t *)tmp_p);
+    tmp_p += sizeof(uint32_t);
+    tmp_size += sizeof(uint32_t);
+
+    for(i = 0; i < pl->num_hits; i++) {
+        file_index = *((uint32_t *)tmp_p);
+        tmp_p += sizeof(uint32_t);
+        tmp_size += sizeof(uint32_t);
+
+        file_size = *((uint32_t *)tmp_p);
+        tmp_p += sizeof(uint32_t);
+        tmp_size += sizeof(uint32_t);
+
+        memset((void *)file_name, '\0', 256);
+        strncpy(file_name, ((char *)tmp_p), 255);
+        file_name[255] = '\0';
+        tmp_p += strlen(file_name);
+        tmp_size += strlen(file_name);
+        
+        memset((void *)exten_block, '\0', 256);
+        strncpy((char *)exten_block, ((char *)tmp_p), 255);
+        exten_block[255] = '\0';
+        tmp_p += strlen((char *)exten_block);
+        tmp_size += strlen((char *)exten_block);
+
+        res_set = append_query_hit_result_to_set(res_set, file_index,
+            file_size, file_name, exten_block);
+    }
+
+    pl->list = res_set;
+
+    // At this point I want to parse the extra block.
+    memcpy(pl->extra_block.ven_code, (unsigned char *)tmp_p, 4);
+    tmp_p += 4;
+    tmp_size += 4;
+
+    pl->extra_block.open_data_size = *((unsigned char *)tmp_p);
+    tmp_p += sizeof(unsigned char);
+    tmp_size += sizeof(unsigned char);
+
+    pl->extra_block.open_data = malloc(pl->extra_block.open_data_size);
+    if (pl->extra_block.open_data == NULL) {
+        return -1;
+    }
+
+    memcpy(pl->extra_block.open_data, (unsigned char *)tmp_p,
+        pl->extra_block.open_data_size);
+    tmp_p += pl->extra_block.open_data_size;
+    tmp_size += pl->extra_block.open_data_size;
+
+    pl->priv_data_len = raw_pl_len - tmp_size - GNUT_SERVENT_ID_LEN;
+    pl->priv_data = malloc(pl->priv_data_len);
+    if (pl->priv_data == NULL) {
+        return -2;
+    }
+
+    memcpy((void *)pl->priv_data, tmp_p, pl->priv_data_len);
+    tmp_p += pl->priv_data_len;
+
+    memcpy((void *)pl->servent_id, tmp_p, GNUT_SERVENT_ID_LEN);
+    tmp_p += GNUT_SERVENT_ID_LEN;
 
     return 0;
 }
