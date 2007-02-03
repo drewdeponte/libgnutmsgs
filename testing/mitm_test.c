@@ -153,7 +153,7 @@ void *handle_conn(void *arg) {
 
     r = gnut_recv_msg(&rmsg, sd);
     while (r == 0) {
-        printf("Received message.\n");
+        printf("Received message on sd (%d).\n", sd);
         //gnut_dump_msg(&rmsg);
 
         if (rmsg.header.type == 0x00) {
@@ -420,7 +420,11 @@ void *try_connect(void *arg) {
             r = add_conn_to_list(sd, port, ip_addr);
             if (r != 0) {
                 printf("try_conn: %s:%d Err(%d): Failed to add conn to conns list.\n", ip_addr, port, r);
-                close(sd);
+                if ((r = close(sd)) == -1) {
+                    printf("try_conn: %s:%d Failed to close(%d).\n",
+                        ip_addr, port, sd);
+                    perror("close");
+                }
                 free((void *)p_hcsdata);
             }
 
@@ -430,15 +434,31 @@ void *try_connect(void *arg) {
             if (r != 0) {
                 printf("try_conn: %s:%d Err(%d): Failed to create conn handler.\n",
                     ip_addr, port, r);
-                close(sd);
+                if ((r = close(sd)) == -1) {
+                    printf("try_conn: %s:%d Failed to close(%d).\n",
+                        ip_addr, port, sd);
+                    perror("close");
+                }
                 free((void *)p_hcsdata);
             }
         } else {
             pthread_mutex_unlock(&conns_cnt_mutex);
         }
-    } else {
-        printf("try_conn: %s:%d Handshake rejecet, without list of servers.\n", ip_addr, port);
-        close(sd);
+    } else if (retval == 2) {
+        printf("try_conn(%d): %s:%d Handshake rejecet, without list of servers.\n", sd, ip_addr, port);
+        if ((r = close(sd)) == -1) {
+            printf("try_conn: %s:%d Failed to close(%d).\n", ip_addr, port,
+                sd);
+            perror("close");
+        }
+    } else if (retval == -1) {
+        printf("try_conn(%d): %s:%d handle_handshake() failed.\n",
+            sd, ip_addr, port);
+        if ((r = close(sd)) == -1) {
+            printf("try_conn: %s:%d Failed to close(%d).\n", ip_addr, port,
+                sd);
+            perror("close");
+        }
     }
 
     pthread_mutex_lock(&try_conns_cnt_mutex);
@@ -756,10 +776,7 @@ int get_server_from_list(char *ip_addr, uint16_t *port,
 }
 
 int handle_handshake(int fd) {
-    //char hdr[] = "GNUTELLA CONNECT/0.6\r\nUser-Agent: LimeWire/1.0\r\nX-Ultrapeer: True\r\n\r\n";
-    //char hdr[] = "GNUTELLA CONNECT/0.6\r\nUser-Agent: LimeWire/4.12.6\r\nX-Ultrapeer: True\r\nPong-Caching: 0.1\r\nGGEP: 0.5\r\n\r\n";
     char hdr[] = "GNUTELLA CONNECT/0.6\r\nUser-Agent: Mutella-0.4.5\r\nX-Ultrapeer: True\r\nX-Leaf-Max: 32\r\n\r\n";
-    //char hdr[] = "GNUTELLA CONNECT/0.6\r\nUser-Agent: LimeWire/1.0\r\n\r\n";
     char finish_init[] ="GNUTELLA/0.6 200 OK\r\n\r\n";
     int retval = 0;
     char recv_buff[BUFSIZE];
@@ -767,21 +784,37 @@ int handle_handshake(int fd) {
     char *templine;
     char *line;
 	char *saveptr1, *saveptr2;
+    int bytes_written;
+    int r;
+
+    bytes_written = 0;
 
     //printf("--attempting to write\n");
 
-    write(fd, (const void *)hdr, strlen(hdr));
+    while (bytes_written < strlen(hdr)) {
+        r = send(fd, (const void *)hdr, strlen(hdr) - bytes_written, 0);
+        if (r < 0) {
+            perror("write");
+            return -1;
+        } else if (r == 0) {
+            printf("SHITFUCKME, write() returned 0.\n");
+        } else {
+            bytes_written += r;
+        }
+    }
+
+    //write(fd, (const void *)hdr, strlen(hdr));
 
     //printf("Wrote (%s)\n", hdr);
 
     retval = recv(fd, (char *)recv_buff,BUFSIZE-1,0);
     if (retval == 0) {
         printf("nigger closed the socket on us.\n");
-        return 2;
+        return -1;
     } else if (retval < 0) {
         printf("recv had an error (%d).\n", retval);
         perror("recv");
-        return 2;
+        return -1;
     }
     recv_buff[retval] = '\0';
 
@@ -796,12 +829,12 @@ int handle_handshake(int fd) {
         //write back GNUTELLA/0.6 200 OK
 
         //printf("--attempting to write: %s\n",finish_init);
-        write(fd, (const void *)finish_init, strlen(finish_init));
-
-		//parse shit inside here? ie add to main conn list, then call HandleComThread
-
-	
-
+        r = write(fd, (const void *)finish_init, strlen(finish_init));
+        if (r < 0) {
+            printf("SHITFUCK(2), write() failed with %d.\n", r);
+        } else if (r == 0) {
+            printf("SHITFUCKME(2), write() returned 0.\n");
+        }
 
 		return 1;
     }
