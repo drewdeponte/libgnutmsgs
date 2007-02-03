@@ -25,6 +25,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <signal.h>
 
 #include "gnut_msgs.h"
 
@@ -336,17 +337,32 @@ void *try_connect(void *arg) {
 
     /* Attempt to establish a TCP connection to the server. */
     retval = connect(sd, (struct sockaddr *)&servaddr, sizeof(servaddr));
-    printf("try_conn: connecting to %s:%d\n", ip_addr, port);
+    
+	if(!FD_ISSET(sd, &writesds)) { 
+		printf("omg this was it\n"); 
+		return NULL; 
+	}
+	
+	printf("try_conn: connecting to %s:%d\n", ip_addr, port);
     retval = select(sd+1, NULL, &writesds, NULL, &timeout);
-    if (retval == 0) { /* hit the timeout */
+    
+	if (retval == 0) { /* hit the timeout */
         printf("try_conn: connecting to %s:%d timed out.\n", ip_addr, port);
-        FD_ZERO(&writesds);
-        fcntl(sd, F_SETFL, sockflags);
-        close(sd);
+
+		printf("before lock in timeout(%d)\n",sd);
         pthread_mutex_lock(&try_conns_cnt_mutex);
         try_conns_cnt--;
+		printf("in lock in timeout(%d)\n",sd);
         pthread_cond_signal(&try_conns_cnt_cond);
         pthread_mutex_unlock(&try_conns_cnt_mutex);
+
+		printf("after locks in timeout(%d)\n",sd);
+
+        fcntl(sd, F_SETFL, sockflags);
+        close(sd);
+        FD_ZERO(&writesds);
+
+
         return NULL;
     } else if (retval < 0) {  /* a freakin error */
         printf("try_conn: %s:%d Err(%d): Call to select() failed.\n", ip_addr,
@@ -358,6 +374,12 @@ void *try_connect(void *arg) {
         close(sd);
         return NULL;
     } else { /* call to select succeeded now must see if actually made conn */
+		
+		if(!FD_ISSET(sd, &writesds)) { 
+			printf("omg this was it(2)\n"); 
+			return NULL; 
+		}
+
         r = getsockopt(sd, SOL_SOCKET, SO_ERROR, &connsockflag,
             &connsockflag_size);
         if (r != 0) {
@@ -390,6 +412,8 @@ void *try_connect(void *arg) {
     }
 
     fcntl(sd, F_SETFL, sockflags);
+
+
 
     /* Perform the handshake here */
     retval = handle_handshake(sd);
@@ -507,11 +531,14 @@ void *attempt_connect(void *arg) {
          * create */
         pthread_mutex_lock(&try_conns_cnt_mutex);
         num_to_try = MAX_TRYCONNS - try_conns_cnt;
+		printf("num to try: %d\n",num_to_try);
         pthread_mutex_unlock(&try_conns_cnt_mutex);
 
         pthread_mutex_lock(&serv_list_len_mutex);
-        if (serv_list_len < num_to_try)
+		printf("serv_list_len: %d\n",serv_list_len);		      
+		if (serv_list_len < num_to_try)
             num_to_try = serv_list_len;
+		printf("num_to try then after servlistlencheck: %d\n",num_to_try);
         pthread_mutex_unlock(&serv_list_len_mutex);
 
         /* Iterate from 0 to num_to_try popping a server ip and port off
@@ -520,6 +547,7 @@ void *attempt_connect(void *arg) {
         for (i = 0; i < num_to_try; i++) {
             pthread_mutex_lock(&serv_list_mutex);
             pop_ret = get_server_from_list(&cur_ip[0], &cur_port, serv_list);
+			printf("pop_ret for _get_server_from_list was: %d\n",pop_ret);
             pthread_mutex_unlock(&serv_list_mutex);
             p_tcsdata = (struct tc_sdata *)malloc(sizeof(struct tc_sdata));
             if (p_tcsdata != NULL) {
@@ -533,6 +561,7 @@ void *attempt_connect(void *arg) {
                 } else {
                     pthread_detach(tc_tids[i]);
                     pthread_mutex_lock(&try_conns_cnt_mutex);
+					printf("try_conns_cnt: %d\n",try_conns_cnt);
                     try_conns_cnt++;
                     pthread_mutex_unlock(&try_conns_cnt_mutex);
                 }
@@ -789,6 +818,8 @@ int handle_handshake(int fd) {
 
     bytes_written = 0;
 
+	signal (SIGPIPE, SIG_IGN);
+
     //printf("--attempting to write\n");
 
     while (bytes_written < strlen(hdr)) {
@@ -1029,8 +1060,10 @@ int rem_conn_from_list(int sd) {
             prev_node = cur_node;
             cur_node = cur_node->next;
         }
+	printf("rem_conn_from_list(sd: %d) inside\n",sd);
     }
     pthread_mutex_unlock(&conn_list_mutex);
+	printf("rem_conn_from_list(sd: %d) outside\n",sd);
 
     return 0;
 }
