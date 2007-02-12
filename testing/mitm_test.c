@@ -81,11 +81,11 @@ pthread_mutex_t out_fp_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 struct conn_list_node {
     int sd;
+    pthread_mutex_t sd_mutex;
     uint16_t port;
     char ip_addr[16];
     char msg_id_list[MAX_IDS][GNUT_MSG_ID_LEN];
     pthread_mutex_t msg_id_list_mutex;
-    pthread_mutex_t sd_mutex;
     struct conn_list_node *next;
 };
 
@@ -125,10 +125,11 @@ void *handle_conn(void *arg) {
     int sd;
     gnut_msg_t rmsg;
     gnut_msg_t mymsg;
-    char tmp_ip[16];
-	struct serv_list_node *tmphead;
+    //char tmp_ip[16];
+	//struct serv_list_node *tmphead;
     int r;
     struct conn_list_node *p_conn;
+    fd_set readfds;
 
     int last_msg_id_pos, msg_id_list_looped;
     
@@ -141,18 +142,54 @@ void *handle_conn(void *arg) {
 
     sd = p_data->sd;
 
+    /* Here I a get the pointer to the actual connection node given the
+     * socket descriptor. */
     p_conn = get_conn_node(sd);
     if (p_conn == NULL) {
         printf("SHITFUCK! get_conn_node() failed.\n");
     }
 
+    /* Here I build the intial ping message to make after I make a
+     * connection to another gnutella node. Then I send the ping to the
+     * gnutella node. */
     gnut_build_ping_msg(&mymsg);
 
-    gnut_send_msg(&mymsg, sd);
-
+    fprintf(stderr, "hand_conn(%d): about to lock sd_mutex.\n", sd);
+    pthread_mutex_lock(&p_conn->sd_mutex);
+    fprintf(stderr, "hand_conn(%d): locked sd_mutex.\n", sd);
+    r = gnut_send_msg(&mymsg, sd);
+    if (r != 0) {
+        fprintf(stderr, "hand_conn(%d): about to unlock sd_mutex.\n", sd);
+        pthread_mutex_unlock(&p_conn->sd_mutex);
+        fprintf(stderr, "hand_conn(%d): unlocked sd_mutex.\n", sd);
+        fprintf(stderr, "Err(%d): About to remove conn from list.\n", sd);
+        rem_conn_from_list(sd);
+        fprintf(stderr, "Err(%d): Removed conn from list.\n", sd);
+        return NULL;
+    }
+    pthread_mutex_unlock(&p_conn->sd_mutex);
+    fprintf(stderr, "hand_conn(%d): unlocked sd_mutex.\n", sd);
     gnut_free_msg(&mymsg);
 
+    FD_ZERO(&readfds);
+    FD_SET(sd, &readfds);
+
+    r = select(sd+1, &readfds, NULL, NULL, NULL);
+    if (r == -1) {
+        perror("select");
+        rem_conn_from_list(sd);
+        return NULL;
+    }
+    fprintf(stderr, "DATA IS AVAILABLE for %d.\n", sd);
+
+
+    fprintf(stderr, "hand_conn(%d)recv1: about to lock sd_mutex.\n", sd);
+    pthread_mutex_lock(&p_conn->sd_mutex);
+    fprintf(stderr, "hand_conn(%d)recv1: locked sd_mutex.\n", sd);
     r = gnut_recv_msg(&rmsg, sd);
+    fprintf(stderr, "hand_conn(%d)recv1: about to unlock sd_mutex.\n", sd);
+    pthread_mutex_unlock(&p_conn->sd_mutex);
+    fprintf(stderr, "hand_conn(%d)recv1: unlocked sd_mutex.\n", sd);
     while (r == 0) {
         printf("Received message on sd (%d).\n", sd);
         //gnut_dump_msg(&rmsg);
@@ -165,7 +202,16 @@ void *handle_conn(void *arg) {
                 printf("--RECV'd Probe Ping.\n");
                 gnut_build_pong_msg(&mymsg, rmsg.header.message_id,
                     "75.111.17.120", 4567, 20, 500000);
-                gnut_send_msg(&mymsg, sd);
+                pthread_mutex_lock(&p_conn->sd_mutex);
+                r = gnut_send_msg(&mymsg, sd);
+                if (r != 0) {
+                    printf("FUCK GNUT_SEND_MSG() FAILED in Probe Ping.\n");
+                    pthread_mutex_unlock(&p_conn->sd_mutex);
+                    gnut_free_msg(&mymsg);
+                    rem_conn_from_list(sd);
+                    return NULL;
+                }
+                pthread_mutex_unlock(&p_conn->sd_mutex);
                 gnut_free_msg(&mymsg);
                 printf("--SENT Pong.\n");
             } else if ((rmsg.header.ttl == 2) && (rmsg.header.hops == 0)) {
@@ -180,24 +226,48 @@ void *handle_conn(void *arg) {
                 printf("--RECV'd \"Crawling Ping\".\n");
                 gnut_build_pong_msg(&mymsg, rmsg.header.message_id,
                     "75.111.17.120", 4567, 20, 500000);
+                pthread_mutex_lock(&p_conn->sd_mutex);
                 gnut_send_msg(&mymsg, sd);
+                if (r != 0) {
+                    printf("FUCK GNUT_SEND_MSG() FAILED in Crawling Ping.\n");
+                    pthread_mutex_unlock(&p_conn->sd_mutex);
+                    gnut_free_msg(&mymsg);
+                    rem_conn_from_list(sd);
+                    return NULL;
+                }
+                pthread_mutex_unlock(&p_conn->sd_mutex);
                 gnut_free_msg(&mymsg);
                 printf("--SENT Pong.\n");
             } else {
                 printf("--RECV'd General Ping.\n");
                 gnut_build_pong_msg(&mymsg, rmsg.header.message_id,
                     "75.111.17.120", 4567, 20, 500000);
+                pthread_mutex_lock(&p_conn->sd_mutex);
                 gnut_send_msg(&mymsg, sd);
+                if (r != 0) {
+                    printf("FUCK GNUT_SEND_MSG() FAILED in General Ping.\n");
+                    pthread_mutex_unlock(&p_conn->sd_mutex);
+                    gnut_free_msg(&mymsg);
+                    rem_conn_from_list(sd);
+                    return NULL;
+                }
+                pthread_mutex_unlock(&p_conn->sd_mutex);
                 gnut_free_msg(&mymsg);
                 printf("--SENT Pong.\n");
-                
-                bcast_msg(sd, &rmsg);
+               
+                r = bcast_msg(sd, &rmsg);
+                if (r != 0) {
+                    printf("BCAST FAILED.\n");
+                    rem_conn_from_list(sd);
+                    return NULL;
+                }
                 printf("--broadcast ping to connected servers.\n");
             }
         } else if (rmsg.header.type == 0x01) {
             // pong - parse the ip address and ports and add them to
             // serv list
             printf("GOT PONG FROM server.\n");
+            /*
             inet_ntop(AF_INET, (const void *)&rmsg.payload.pong.ip_addr, 
                 tmp_ip, 16);
             tmp_ip[15] = '\0';
@@ -212,6 +282,7 @@ void *handle_conn(void *arg) {
             serv_list_len++;
             pthread_mutex_unlock(&serv_list_len_mutex);
             printf("--added server to serv list.\n");
+            */
         } else if (rmsg.header.type == 0x02) {
             printf("Recv'd BYE msg.\n");
             // bye
@@ -220,7 +291,12 @@ void *handle_conn(void *arg) {
             printf("GOT QUERY FROM SERVER\n");
             //gnut_dump_msg(&rmsg);
             // query
-            bcast_msg(sd, &rmsg);
+            /*
+            r = bcast_msg(sd, &rmsg);
+            if (r != 0) {
+                rem_conn_from_list(sd);
+                return NULL;
+            }
             printf("--broadcast query to connected servers.\n");
             if (!msg_id_list_looped) {
                 if (last_msg_id_pos == -1) {
@@ -252,10 +328,11 @@ void *handle_conn(void *arg) {
                 }
             }
             printf("--stored query message id in pos[%d]", last_msg_id_pos);
+            */
         } else if (rmsg.header.type == 0x81) {
             // query hit message
             printf("GOT A FUCKING QUERY HIT!!!!!!!!!!\n");
-            fwrd_qhit_msg(&rmsg);
+            //fwrd_qhit_msg(&rmsg);
             printf("FORWARDED QUERY HIT MSG.\n");
         } else {
             printf("GOT SOME OTHER TYPE OF MESSAGE.\n");
@@ -263,9 +340,32 @@ void *handle_conn(void *arg) {
 
         gnut_free_msg(&rmsg);
         //printf("-freed the message.\n");
+    
+        r = select(sd+1, &readfds, NULL, NULL, NULL);
+        if (r == -1) {
+            perror("select");
+            rem_conn_from_list(sd);
+            return NULL;
+        }
+    
+        printf("DATA IS AVAILABLE for %d.\n", sd);
 
+        /*
+        pthread_mutex_lock(&p_conn->sd_mutex);
         r = gnut_recv_msg(&rmsg, sd);
+        pthread_mutex_unlock(&p_conn->sd_mutex);
+        */
+
+        fprintf(stderr, "hand_conn(%d)recv2: about to lock sd_mutex.\n", sd);
+        pthread_mutex_lock(&p_conn->sd_mutex);
+        fprintf(stderr, "hand_conn(%d)recv2: locked sd_mutex.\n", sd);
+        r = gnut_recv_msg(&rmsg, sd);
+        fprintf(stderr, "hand_conn(%d)recv2: about to unlock sd_mutex.\n", sd);
+        pthread_mutex_unlock(&p_conn->sd_mutex);
+        fprintf(stderr, "hand_conn(%d)recv2: unlocked sd_mutex.\n", sd);
     }
+
+    fprintf(stderr, "hand_conn(%d): about to rem conn from list and exit.\n", sd);
 
     rem_conn_from_list(sd);
 
@@ -348,6 +448,9 @@ void *try_connect(void *arg) {
     
 	if (retval == 0) { /* hit the timeout */
         printf("try_conn: connecting to %s:%d timed out.\n", ip_addr, port);
+        FD_ZERO(&writesds);
+        /* fcntl(sd, F_SETFL, sockflags); */
+        close(sd);
 
 		printf("before lock in timeout(%d)\n",sd);
         pthread_mutex_lock(&try_conns_cnt_mutex);
@@ -438,6 +541,9 @@ void *try_connect(void *arg) {
 
         pthread_mutex_lock(&conns_cnt_mutex);
         if (conns_cnt < MAX_CONNS) {
+            //sockflags = fcntl(sd, F_GETFL, 0);
+            //fcntl(sd, F_SETFL, sockflags | O_NONBLOCK);
+
             pthread_mutex_unlock(&conns_cnt_mutex);
             /* append connection to central connection list and remove
              * the ip_addr from the attempt to connect ip_addr list. */
@@ -569,7 +675,7 @@ void *attempt_connect(void *arg) {
                 printf("attempt_conn: Err: malloc() failed.\n");
             }
             print_conn_list();
-            usleep(2);
+            usleep(3);
         }
     }
 
@@ -589,7 +695,8 @@ void *attempt_connect(void *arg) {
  */
 
 int main(int argc, char *argv[]) {
-    int listsd, connsd, reuse_set_flag, r;
+    int listsd, connsd, reuse_set_flag;
+    int r;
     struct sockaddr_in servaddr;
     struct sockaddr_in clntaddr;
     socklen_t len;
@@ -687,6 +794,7 @@ int main(int argc, char *argv[]) {
             printf("Failed to add conn to central conns list.\n");
         }
         */
+
     }
 
     fclose(out_fp);
@@ -818,7 +926,7 @@ int handle_handshake(int fd) {
 
     bytes_written = 0;
 
-	signal (SIGPIPE, SIG_IGN);
+	//signal (SIGPIPE, SIG_IGN);
 
     //printf("--attempting to write\n");
 
@@ -844,6 +952,7 @@ int handle_handshake(int fd) {
         return -1;
     } else if (retval < 0) {
         printf("recv had an error (%d).\n", retval);
+        fprintf(stderr, "Oh shit, an error.\n");
         perror("recv");
         return -1;
     }
@@ -982,23 +1091,46 @@ void print_list(struct serv_list_node *head) {
 
 int bcast_msg(int orig_sd, gnut_msg_t *p_msg) {
     struct conn_list_node *cur_node;
+    int r;
 
     if (p_msg->header.ttl == 0)
         return 0;
 
+    fprintf(stderr, "-%d-about to lock conn_list_mutex.\n", orig_sd);
     pthread_mutex_lock(&conn_list_mutex);
+    fprintf(stderr, "-%d-locked conn_list_mutex.\n", orig_sd);
     cur_node = conn_list;
+    fprintf(stderr, "-%d-set cur_node to conn_list.\n", orig_sd);
     while (cur_node) {
-        printf("----------------an interation.\n");
+        fprintf(stderr, "-%d iteration for sd = %d.\n", orig_sd, cur_node->sd);
         if (cur_node->sd != orig_sd) {
             /* send the message on */
-            printf("-----attempting to send message.\n");
-            gnut_send_msg(p_msg, cur_node->sd);
-            printf("-----sent the message.\n");
+            fprintf(stderr, "-%d--(%d)--attempting to send message.\n",
+                orig_sd, cur_node->sd);
+            fprintf(stderr, "-%d-(%d)about to lock cur_node->sd_mutex.\n",
+                orig_sd, cur_node->sd);
+            pthread_mutex_lock(&cur_node->sd_mutex);
+            fprintf(stderr, "-%d-(%d)locked cur_node->sd_mutex.\n", orig_sd,
+                cur_node->sd);
+            r = gnut_send_msg(p_msg, cur_node->sd);
+            fprintf(stderr, "-%d-(%d) sent msg with gnut_send_msg [%d].\n", orig_sd, cur_node->sd, r);
+            if (r != 0) {
+                pthread_mutex_unlock(&cur_node->sd_mutex);
+                fprintf(stderr, "-%d-(%d)unlocked cur_node->sd_mutex.\n", orig_sd, cur_node->sd);
+                pthread_mutex_unlock(&conn_list_mutex);
+                fprintf(stderr, "-%d-(%d)unlocked conn_list_mutex.\n", orig_sd, cur_node->sd);
+                return -1;
+            }
+            pthread_mutex_unlock(&cur_node->sd_mutex);
+            fprintf(stderr, "-%d-(%d)unlocked cur_node->sd_mutex.\n", orig_sd, cur_node->sd);
+            printf("-%d----sent the message.\n", orig_sd);
         }
         cur_node = cur_node->next;
     }
+    fprintf(stderr, "-%d-about to unlock conn_list_mutex.\n", orig_sd);
     pthread_mutex_unlock(&conn_list_mutex);
+    fprintf(stderr, "-%d-unlocked conn_list_mutex.\n", orig_sd);
+    fprintf(stderr, "-%d-about to return.\n", orig_sd);
 
     return 0;
 }
@@ -1017,7 +1149,9 @@ int fwrd_qhit_msg(gnut_msg_t *p_msg) {
             if (memcmp(p_msg->header.message_id, cur_node->msg_id_list[i],
                        GNUT_MSG_ID_LEN) == 0) {
                 wang_qhit_msg(p_msg);
+                pthread_mutex_lock(&cur_node->sd_mutex);
                 gnut_send_msg(p_msg, cur_node->sd);
+                pthread_mutex_unlock(&cur_node->sd_mutex);
                 pthread_mutex_unlock(&conn_list_mutex);
                 return 0;
             }
