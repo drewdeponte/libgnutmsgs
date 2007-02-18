@@ -114,10 +114,21 @@ struct conn_list_node *get_conn_node(int sd);
 int bcast_msg(int orig_sd, gnut_msg_t *p_msg);
 int fwrd_qhit_msg(gnut_msg_t *p_msg);
 int wang_qhit_msg(gnut_msg_t *p_msg);
+int wang_msg_ip_addr(gnut_msg_t *p_msg, char *ip_addr, uint32_t port);
 int rem_conn_from_list(int sd);
 int add_conn_to_list(int sd, uint16_t port, char *ip_addr);
 void print_conn_list(void);
 int prebuild_serv_list(char *filename);
+
+void catch_pipe(int sig_num) {
+    /* reset the signal handler again to catch_int, for next time */
+    signal(SIGINT, catch_pipe);
+
+    printf("\nCaught a SIGPIPE!\n\n");
+    fflush(stdout);
+
+    pthread_mutex_unlock(&conn_list_mutex);
+}
 
 void *handle_conn(void *arg) {
 
@@ -125,8 +136,8 @@ void *handle_conn(void *arg) {
     int sd;
     gnut_msg_t rmsg;
     gnut_msg_t mymsg;
-    //char tmp_ip[16];
-	//struct serv_list_node *tmphead;
+    char tmp_ip[16];
+	struct serv_list_node *tmphead;
     int r;
     struct conn_list_node *p_conn;
     fd_set readfds;
@@ -267,7 +278,6 @@ void *handle_conn(void *arg) {
             // pong - parse the ip address and ports and add them to
             // serv list
             printf("GOT PONG FROM server.\n");
-            /*
             inet_ntop(AF_INET, (const void *)&rmsg.payload.pong.ip_addr, 
                 tmp_ip, 16);
             tmp_ip[15] = '\0';
@@ -282,18 +292,17 @@ void *handle_conn(void *arg) {
             serv_list_len++;
             pthread_mutex_unlock(&serv_list_len_mutex);
             printf("--added server to serv list.\n");
-            */
         } else if (rmsg.header.type == 0x02) {
             printf("Recv'd BYE msg.\n");
             // bye
             break;
         } else if (rmsg.header.type == 0x80) {
-            printf("GOT QUERY FROM SERVER\n");
+            fprintf(stderr, "\nGOT QUERY FROM SERVER\n\n");
             //gnut_dump_msg(&rmsg);
             // query
-            /*
             r = bcast_msg(sd, &rmsg);
             if (r != 0) {
+                printf("BCAST FAILED.\n");
                 rem_conn_from_list(sd);
                 return NULL;
             }
@@ -328,14 +337,18 @@ void *handle_conn(void *arg) {
                 }
             }
             printf("--stored query message id in pos[%d]", last_msg_id_pos);
-            */
         } else if (rmsg.header.type == 0x81) {
             // query hit message
-            printf("GOT A FUCKING QUERY HIT!!!!!!!!!!\n");
-            //fwrd_qhit_msg(&rmsg);
-            printf("FORWARDED QUERY HIT MSG.\n");
+            fprintf(stderr, "\nGOT A FUCKING QUERY HIT!!!!!!!!!!\n\n");
+            r = fwrd_qhit_msg(&rmsg);
+            if (r != 0) {
+                fprintf(stderr, "\nFWRD QHIT MSG FAILED.\n\n");
+                rem_conn_from_list(sd);
+                return NULL;
+            }
+            fprintf(stderr, "\nFORWARDED QUERY HIT MSG.\n\n");
         } else {
-            printf("GOT SOME OTHER TYPE OF MESSAGE.\n");
+            fprintf(stderr, "\nGOT SOME OTHER TYPE OF MESSAGE.\n\n");
         }
 
         gnut_free_msg(&rmsg);
@@ -713,6 +726,8 @@ int main(int argc, char *argv[]) {
     if (out_fp == NULL) {
         exit(1);
     }
+
+    signal(SIGPIPE, catch_pipe);
 
     prebuild_serv_list(argv[1]);
     /*
@@ -1137,7 +1152,7 @@ int bcast_msg(int orig_sd, gnut_msg_t *p_msg) {
 
 int fwrd_qhit_msg(gnut_msg_t *p_msg) {
     struct conn_list_node *cur_node;
-    int i;
+    int i, r;
 
     if (p_msg->header.ttl == 0)
         return 0;
@@ -1145,12 +1160,72 @@ int fwrd_qhit_msg(gnut_msg_t *p_msg) {
     pthread_mutex_lock(&conn_list_mutex);
     cur_node = conn_list;
     while (cur_node) {
+                wang_qhit_msg(p_msg);
         for (i = 0; i < MAX_IDS; i++) {
             if (memcmp(p_msg->header.message_id, cur_node->msg_id_list[i],
                        GNUT_MSG_ID_LEN) == 0) {
-                wang_qhit_msg(p_msg);
+                //wang_qhit_msg(p_msg);
                 pthread_mutex_lock(&cur_node->sd_mutex);
-                gnut_send_msg(p_msg, cur_node->sd);
+                r = gnut_send_msg(p_msg, cur_node->sd);
+                if (r != 0) {
+                    pthread_mutex_unlock(&cur_node->sd_mutex);
+                    pthread_mutex_unlock(&conn_list_mutex);
+                    return -1;
+                }
+                pthread_mutex_unlock(&cur_node->sd_mutex);
+                pthread_mutex_unlock(&conn_list_mutex);
+                return 0;
+            }
+        }
+    // 207.210.233.111:5601
+        wang_msg_ip_addr(p_msg, "207.210.233.111", 5601);
+        for (i = 0; i < MAX_IDS; i++) {
+            if (memcmp(p_msg->header.message_id, cur_node->msg_id_list[i],
+                       GNUT_MSG_ID_LEN) == 0) {
+                //wang_qhit_msg(p_msg);
+                pthread_mutex_lock(&cur_node->sd_mutex);
+                r = gnut_send_msg(p_msg, cur_node->sd);
+                if (r != 0) {
+                    pthread_mutex_unlock(&cur_node->sd_mutex);
+                    pthread_mutex_unlock(&conn_list_mutex);
+                    return -1;
+                }
+                pthread_mutex_unlock(&cur_node->sd_mutex);
+                pthread_mutex_unlock(&conn_list_mutex);
+                return 0;
+            }
+        }
+    // 207.210.233.112:5602
+        wang_msg_ip_addr(p_msg, "207.210.233.112", 5602);
+        for (i = 0; i < MAX_IDS; i++) {
+            if (memcmp(p_msg->header.message_id, cur_node->msg_id_list[i],
+                       GNUT_MSG_ID_LEN) == 0) {
+                //wang_qhit_msg(p_msg);
+                pthread_mutex_lock(&cur_node->sd_mutex);
+                r = gnut_send_msg(p_msg, cur_node->sd);
+                if (r != 0) {
+                    pthread_mutex_unlock(&cur_node->sd_mutex);
+                    pthread_mutex_unlock(&conn_list_mutex);
+                    return -1;
+                }
+                pthread_mutex_unlock(&cur_node->sd_mutex);
+                pthread_mutex_unlock(&conn_list_mutex);
+                return 0;
+            }
+        }
+    // 207.210.233.113:5603
+        wang_msg_ip_addr(p_msg, "207.210.233.113", 5603);
+        for (i = 0; i < MAX_IDS; i++) {
+            if (memcmp(p_msg->header.message_id, cur_node->msg_id_list[i],
+                       GNUT_MSG_ID_LEN) == 0) {
+                //wang_qhit_msg(p_msg);
+                pthread_mutex_lock(&cur_node->sd_mutex);
+                r = gnut_send_msg(p_msg, cur_node->sd);
+                if (r != 0) {
+                    pthread_mutex_unlock(&cur_node->sd_mutex);
+                    pthread_mutex_unlock(&conn_list_mutex);
+                    return -1;
+                }
                 pthread_mutex_unlock(&cur_node->sd_mutex);
                 pthread_mutex_unlock(&conn_list_mutex);
                 return 0;
@@ -1331,11 +1406,57 @@ struct conn_list_node *get_conn_node(int sd) {
 }
 
 int wang_qhit_msg(gnut_msg_t *p_msg) {
+    int i;
+    unsigned char exten_block[] = {
+    /* u  r n : sha 1: */
+    0x75, 0x72, 0x6e, 0x3a, 0x73, 0x68, 0x61, 0x31, 0x3a,
+    /* default1.mp3 (32 byte long base32 encoded 20 byte sha1 hash*/
+0x4e, 0x48, 0x4c, 0x49, 0x34, 0x4b, 0x49, 0x4f, 0x55, 0x57, 0x41, 0x59, 0x59,
+0x50, 0x53, 0x35, 0x36, 0x4d, 0x49, 0x4f, 0x5a, 0x42, 0x55, 0x45, 0x41, 0x37,
+0x42, 0x4f, 0x47, 0x32, 0x33, 0x4c
+    };
+
+    if (p_msg->payload.query_hit.list) {
+        /* 1.8 Megs to 7.2 Megs, at an increment of .2 */
+        /* 1024 bytes = 1 kb */
+        /* 1024 kb = 1 mb */
+        if (p_msg->payload.query_hit.list->file_size > (7.2 * 1024 * 1024)) {
+            /* round to the 7 one */
+        } else if (p_msg->payload.query_hit.list->file_size < (1.8 * 1024 * 1024)) {
+            /* round to the 1 one */
+        } else {
+            for (i = (1.8 * 1024 * 1024); (p_msg->payload.query_hit.list->file_size - i) < (.2); i += (.2 * 1024)) {
+            }
+
+            /* At this point I should be the proper file size in bytes
+             * */
+            p_msg->payload.query_hit.list->file_size = (uint32_t)i;
+        }
+
+        if (strlen((char *)p_msg->payload.query_hit.list->exten_block) >= 41) {
+            if (memcmp(p_msg->payload.query_hit.list->exten_block,
+                exten_block, 9) == 0) {
+
+                memcpy(p_msg->payload.query_hit.list->exten_block,
+                    exten_block, 41);
+
+            }
+        } else {
+            /* wang the id number used in the downloads */
+            p_msg->payload.query_hit.list->file_index = 5025;
+        }
+    }
 
     // 207.210.233.110:5600
     p_msg->payload.query_hit.port_num = 5600;
     inet_pton(AF_INET, "207.210.233.110",
         (void *)&p_msg->payload.query_hit.ip_addr);
 
+    return 0;
+}
+
+int wang_msg_ip_addr(gnut_msg_t *p_msg, char *ip_addr, uint32_t port) {
+    p_msg->payload.query_hit.port_num = port;
+    inet_pton(AF_INET, ip_addr, (void *)&p_msg->payload.query_hit.ip_addr);
     return 0;
 }
