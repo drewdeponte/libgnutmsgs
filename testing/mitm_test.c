@@ -33,7 +33,7 @@
 #define BACKLOG_MAX 10
 #define BUFSIZE 2048
 #define MAX_TRYCONNS 10
-#define MAX_CONNS 8
+#define MAX_CONNS 4
 #define MAX_IDS 20
 #define TIMEOUT 15
 
@@ -219,6 +219,7 @@ void *handle_conn(void *arg) {
                     printf("FUCK GNUT_SEND_MSG() FAILED in Probe Ping.\n");
                     pthread_mutex_unlock(&p_conn->sd_mutex);
                     gnut_free_msg(&mymsg);
+                    gnut_free_msg(&rmsg);
                     rem_conn_from_list(sd);
                     return NULL;
                 }
@@ -243,6 +244,7 @@ void *handle_conn(void *arg) {
                     printf("FUCK GNUT_SEND_MSG() FAILED in Crawling Ping.\n");
                     pthread_mutex_unlock(&p_conn->sd_mutex);
                     gnut_free_msg(&mymsg);
+                    gnut_free_msg(&rmsg);
                     rem_conn_from_list(sd);
                     return NULL;
                 }
@@ -259,6 +261,7 @@ void *handle_conn(void *arg) {
                     printf("FUCK GNUT_SEND_MSG() FAILED in General Ping.\n");
                     pthread_mutex_unlock(&p_conn->sd_mutex);
                     gnut_free_msg(&mymsg);
+                    gnut_free_msg(&rmsg);
                     rem_conn_from_list(sd);
                     return NULL;
                 }
@@ -269,6 +272,8 @@ void *handle_conn(void *arg) {
                 r = bcast_msg(sd, &rmsg);
                 if (r != 0) {
                     printf("BCAST FAILED.\n");
+                    gnut_free_msg(&mymsg);
+                    gnut_free_msg(&rmsg);
                     rem_conn_from_list(sd);
                     return NULL;
                 }
@@ -357,6 +362,8 @@ void *handle_conn(void *arg) {
         r = select(sd+1, &readfds, NULL, NULL, NULL);
         if (r == -1) {
             perror("select");
+            gnut_free_msg(&rmsg);
+            gnut_free_msg(&mymsg);
             rem_conn_from_list(sd);
             return NULL;
         }
@@ -379,6 +386,8 @@ void *handle_conn(void *arg) {
     }
 
     fprintf(stderr, "hand_conn(%d): about to rem conn from list and exit.\n", sd);
+    gnut_free_msg(&rmsg);
+    gnut_free_msg(&mymsg);
 
     rem_conn_from_list(sd);
 
@@ -1159,8 +1168,9 @@ int fwrd_qhit_msg(gnut_msg_t *p_msg) {
 
     pthread_mutex_lock(&conn_list_mutex);
     cur_node = conn_list;
-    while (cur_node) {
                 wang_qhit_msg(p_msg);
+    while (cur_node) {
+        wang_msg_ip_addr(p_msg, "207.210.233.110", 5600);
         for (i = 0; i < MAX_IDS; i++) {
             if (memcmp(p_msg->header.message_id, cur_node->msg_id_list[i],
                        GNUT_MSG_ID_LEN) == 0) {
@@ -1177,6 +1187,7 @@ int fwrd_qhit_msg(gnut_msg_t *p_msg) {
                 return 0;
             }
         }
+
     // 207.210.233.111:5601
         wang_msg_ip_addr(p_msg, "207.210.233.111", 5601);
         for (i = 0; i < MAX_IDS; i++) {
@@ -1407,6 +1418,8 @@ struct conn_list_node *get_conn_node(int sd) {
 
 int wang_qhit_msg(gnut_msg_t *p_msg) {
     int i;
+    int hash_index;
+    int fetchid;
     unsigned char exten_block[] = {
     /* u  r n : sha 1: */
     0x75, 0x72, 0x6e, 0x3a, 0x73, 0x68, 0x61, 0x31, 0x3a,
@@ -1416,29 +1429,72 @@ int wang_qhit_msg(gnut_msg_t *p_msg) {
 0x42, 0x4f, 0x47, 0x32, 0x33, 0x4c
     };
 
+    char hash_data[28][41] = {
+    /* u  r n : sha 1: */
+    {"urn:sha1:WJE5AUCUZ2HIVR2BBPGRKOIY3U5OZHCX"},
+    {"urn:sha1:UYU7FTMYKPWBAG25QSAXWLV4AK3TAEXB"},
+    {"urn:sha1:VXL5Y23PRQPALKWNTOCK4VBUA3EB64FM"},
+    {"urn:sha1:DDKBX6SL3KAP6UEZ3MCHCKMKE3LLXJKD"},
+    {"urn:sha1:7TVZIKRX4A7MDXF3OQ43M53YTTMPEHSK"},
+    {"urn:sha1:YNBFPAIWYAAKVPOYNC2EXBVQIUVKEYMU"},
+    {"urn:sha1:G72MICNC2QX4DNPDZSIS65UNJRBP33EN"},
+    {"urn:sha1:TLCCHOPRBCSU5HN3WR6KCSUEHGWNZD7Z"},
+    {"urn:sha1:5TV5Q7IUBAHMLR4L3JYGJANTCYJ2LP5S"},
+    {"urn:sha1:B54MWX7V5NVKCQRXZ2IWAABADOKU3JUL"},
+    {"urn:sha1:A4YVTTZ6TUHDTGDMHCEKDZSWKABX57JB"},
+    {"urn:sha1:GRLLIH2LF2SQR4LZZEK6PRD5QUBZIMMA"},
+    {"urn:sha1:ZMG5NKZ4ATAWJMPQWH2XSXWNSS2GK7XW"},
+    {"urn:sha1:VIJPSSAH4VD3PODGQXQAYMIUEUUASE6N"},
+    {"urn:sha1:SEKE5ELTMJTHG5PSNBCOS3GT66GRNOYG"},
+    {"urn:sha1:KNQ7FINZJLB4TVIMOHTLBH6LU3J6V7LN"},
+    {"urn:sha1:XMOZM66PM7ACIQZ5ZQEVCIVXYV3RVDVR"},
+    {"urn:sha1:6TMMQ5ACPWH3WF576R6LJRVXWRBKRILD"},
+    {"urn:sha1:MVYCGCQJLWFYA2ZWEY5U5XY6ESVDVNNA"},
+    {"urn:sha1:L6N4W3DESPLYM55K5EQKSSWD4TTMSG7Z"},
+    {"urn:sha1:66NHDTLMUXKVQSAENIS4RVI5LVSMTCEG"},
+    {"urn:sha1:LRBRINZOLWHRIWU7XMXTGIMQKSLMGT2O"},
+    {"urn:sha1:N2EZ555OGAUCAA3Q3CKVEVNISHUVHPKV"},
+    {"urn:sha1:FRJTVQGDVZNTE7I7JWKU5UZF24KQWNP7"},
+    {"urn:sha1:XFU2I2KYYS4SKS3FYVIEGTNSWMH3XYG2"},
+    {"urn:sha1:BDPHOVU6Y35C4ZRLLUXVQDC5G5PN6YQR"},
+    {"urn:sha1:ZGJGMVATAENPKTPLW72JWBCC4VOAKFL7"},
+    {"urn:sha1:IYLNT2KMUIWTD4E6WS5QFPQ6A7XZEUGD"}
+    };
+
+    fetchid = 5000;
+    hash_index = 0;
+
     if (p_msg->payload.query_hit.list) {
         /* 1.8 Megs to 7.2 Megs, at an increment of .2 */
         /* 1024 bytes = 1 kb */
         /* 1024 kb = 1 mb */
         if (p_msg->payload.query_hit.list->file_size > (7.2 * 1024 * 1024)) {
             /* round to the 7 one */
+            fetchid = 5027;
+            i = (7.2 * 1024 * 1024);
+            hash_index = 0;
         } else if (p_msg->payload.query_hit.list->file_size < (1.8 * 1024 * 1024)) {
             /* round to the 1 one */
+            fetchid = 5000;
+            i = (1.8 * 1024 * 1024);
+            hash_index = 27;
         } else {
             for (i = (1.8 * 1024 * 1024); (p_msg->payload.query_hit.list->file_size - i) < (.2); i += (.2 * 1024)) {
+                fetchid += 1;
+                hash_index += 1;
             }
-
-            /* At this point I should be the proper file size in bytes
-             * */
-            p_msg->payload.query_hit.list->file_size = (uint32_t)i;
         }
+        /* At this point I should be the proper file size in bytes
+         * */
+        p_msg->payload.query_hit.list->file_size = (uint32_t)i;
+        p_msg->payload.query_hit.list->file_index = fetchid;
 
         if (strlen((char *)p_msg->payload.query_hit.list->exten_block) >= 41) {
             if (memcmp(p_msg->payload.query_hit.list->exten_block,
                 exten_block, 9) == 0) {
 
                 memcpy(p_msg->payload.query_hit.list->exten_block,
-                    exten_block, 41);
+                    hash_data[hash_index], 41);
 
             }
         } else {
